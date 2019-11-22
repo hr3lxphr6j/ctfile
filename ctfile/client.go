@@ -1,4 +1,4 @@
-package client
+package ctfile
 
 import (
 	"bytes"
@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/cookiejar"
 	urlpkg "net/url"
+	"path"
 	"regexp"
 	"strings"
 
@@ -17,6 +18,33 @@ import (
 
 	"github.com/hr3lxphr6j/ctfile/utils"
 )
+
+type Type uint8
+
+const (
+	TypeFile Type = iota
+	TypeFolder
+)
+
+type File struct {
+	Type Type
+	ID   string
+	Name string
+	Size string
+	Date string
+}
+
+type Share struct {
+	UserID     int    `json:"userid"`
+	FolderID   int    `json:"folder_id"`
+	FileChk    string `json:"file_chk"`
+	FolderName string `json:"folder_name"`
+	FolderTime string `json:"folder_time"`
+	Username   string `json:"username"`
+	Email      string `json:"email"`
+	Url        string `json:"url"`
+	PageTitle  string `json:"page_title"`
+}
 
 const (
 	apiEndpoint = "https://webapi.400gb.com"
@@ -96,26 +124,24 @@ func (c *Client) GetShareInfo(shareID, folderID string) (*Share, error) {
 	if err := json.NewDecoder(utfbom.SkipOnly(resp.Body)).Decode(share); err != nil {
 		return nil, err
 	}
-	if err := c.parseFiles(share); err != nil {
-		return nil, err
-	}
 	return share, nil
 }
 
-func (c *Client) parseFiles(share *Share) error {
+func (c *Client) ParseFiles(share *Share) ([]*File, error) {
 	url := fmt.Sprintf("%s%s", apiEndpoint, share.Url)
 	resp, err := c.do(http.MethodGet, url, nil, map[string]string{"Origin": origin}, nil)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("StatusCode: %d", resp.StatusCode)
+		return nil, fmt.Errorf("StatusCode: %d", resp.StatusCode)
 	}
 	b, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
-		return err
+		return nil, err
 	}
+	files := make([]*File, 0, 4)
 	data := gjson.ParseBytes(b)
 	data.Get("aaData").ForEach(func(_, value gjson.Result) bool {
 		item := value.Array()
@@ -132,10 +158,10 @@ func (c *Client) parseFiles(share *Share) error {
 		case TypeFolder:
 			file.ID = utils.GetValueFromHTML(item[0].String(), "value")
 		}
-		share.Files = append(share.Files, file)
+		files = append(files, file)
 		return true
 	})
-	return nil
+	return files, nil
 }
 
 func (c *Client) GetDownloadUrl(file *File) (map[string]string, error) {
@@ -148,7 +174,7 @@ func (c *Client) GetDownloadUrl(file *File) (map[string]string, error) {
 	url := fmt.Sprintf("%s%s", apiEndpoint, "/getfile.php")
 	resp, err := c.do(http.MethodGet, url,
 		map[string]string{"f": file.ID},
-		map[string]string{"Origin": origin,}, nil)
+		map[string]string{"Origin": origin}, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -171,4 +197,32 @@ func (c *Client) GetDownloadUrl(file *File) (map[string]string, error) {
 		return true
 	})
 	return res, nil
+}
+
+func (c *Client) walk(shareID, folderID, curPath string, handler func(curPath string, share *Share, file *File) bool) error {
+	share, err := c.GetShareInfo(shareID, folderID)
+	if err != nil {
+		return err
+	}
+	files, err := c.ParseFiles(share)
+	if err != nil {
+		return err
+	}
+	for _, file := range files {
+		switch file.Type {
+		case TypeFolder:
+			if err := c.walk(shareID, file.ID, path.Join(curPath, share.FolderName), handler); err != nil {
+				return err
+			}
+		case TypeFile:
+			if !handler(path.Join(curPath, share.FolderName), share, file) {
+				return nil
+			}
+		}
+	}
+	return nil
+}
+
+func (c *Client) Walk(shareID, folderID string, handler func(curPath string, share *Share, file *File) bool) error {
+	return c.walk(shareID, folderID, "", handler)
 }
