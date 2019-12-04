@@ -26,6 +26,10 @@ const (
 	TypeFolder
 )
 
+var (
+	ErrWalkAbort = errors.New("walk abort")
+)
+
 type File struct {
 	Type Type
 	ID   string
@@ -186,9 +190,14 @@ func (c *Client) GetDownloadUrl(file *File) (map[string]string, error) {
 	if err != nil {
 		return nil, err
 	}
+	result := gjson.ParseBytes(b)
+	code := result.Get("code").Int()
+	if code != 200 {
+		return nil, errors.New(result.Get("message").String())
+	}
 	reg := regexp.MustCompile(`vip_(\D*)_url`)
 	res := make(map[string]string)
-	gjson.ParseBytes(b).ForEach(func(key, value gjson.Result) bool {
+	result.ForEach(func(key, value gjson.Result) bool {
 		match := reg.FindStringSubmatch(key.String())
 		if match == nil || len(match) < 2 {
 			return true
@@ -216,7 +225,7 @@ func (c *Client) walk(shareID, folderID, curPath string, handler func(curPath st
 			}
 		case TypeFile:
 			if !handler(path.Join(curPath, share.FolderName), share, file) {
-				return nil
+				return ErrWalkAbort
 			}
 		}
 	}

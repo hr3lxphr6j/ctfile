@@ -16,29 +16,26 @@ func newOptions() *options {
 
 type option func(*options)
 
+func Custom(key, value string) option {
+	return func(o *options) {
+		(*o)[key] = value
+	}
+}
+
 // The file name of the downloaded file.
 // It is always relative to the directory given in --dir option.
 // When the --force-sequential option is used, this option is ignored.
 func Output(output string) option {
-	return func(o *options) {
-		(*o)["out"] = output
-	}
+	return Custom("out", output)
 }
 
 // The directory to store the downloaded file.
 func Directory(dir string) option {
-	return func(o *options) {
-		if dir == "" {
-			return
-		}
-		(*o)["dir"] = dir
-	}
+	return Custom("dir", dir)
 }
 
 // Set user agent for HTTP(S) downloads. Default: aria2/$VERSION,
 // $VERSION is replaced by package version.
 func UserAgent(ua string) option {
-	return func(o *options) {
-		(*o)["user-agent"] = ua
-	}
+	return Custom("user-agent", ua)
 }
