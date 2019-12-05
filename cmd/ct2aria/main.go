@@ -83,6 +83,7 @@ func waitTask(ctx context.Context, task *task) {
 	for {
 		select {
 		case <-ctx.Done():
+			return
 		case <-t.C:
 			status, err := client.TellStatus(task.Gid)
 			if err != nil {
@@ -113,6 +114,7 @@ func consumer(ctx context.Context, pendingCh <-chan *task) {
 		case <-ctx.Done():
 			return
 		case task := <-pendingCh:
+			log.Printf("File: %s, Size: %s", task.File.Name, task.File.Size)
 			rl.Take()
 			var urls map[string]string
 			err := backoff.Retry(func() error {
@@ -133,7 +135,11 @@ func consumer(ctx context.Context, pendingCh <-chan *task) {
 				continue
 			}
 
-			gid, err := aria2Client.AddUri(utils.Map2slice(urls), aria2.Output(path.Join(task.CurPath, task.File.Name)))
+			gid, err := aria2Client.AddUri(
+				utils.Map2slice(urls),
+				aria2.Output(path.Join(task.CurPath, task.File.Name)),
+				aria2.Directory(aria2Output),
+			)
 			if err != nil {
 				log.Fatalf("failed to call aria2.AddUri, err: %s", err)
 			}
@@ -165,7 +171,7 @@ func main() {
 		reWalk      = make(chan struct{}, 1)
 	)
 	ctx = context.WithValue(ctx, ctfileClientKey{}, ctfileClient)
-	ctx = context.WithValue(ctx, rateLimitKey{}, ratelimit.New(100))
+	ctx = context.WithValue(ctx, rateLimitKey{}, ratelimit.New(30))
 	ctx = context.WithValue(ctx, aria2ClientKey{}, aria2.New(aria2Endpoint, aria2Token))
 
 	// process pending chan, add task to aria2.
@@ -181,6 +187,7 @@ LoopShare:
 	for _, id := range shareIDs {
 		finishedFile := make(map[string]struct{}, 64)
 		finishedFileLock := new(sync.RWMutex)
+		b := backoff.NewExponentialBackoffBuilder().MaxRetries(10).Build()
 	LoopWalk:
 		for {
 			err := ctfileClient.Walk(id, "", func(curPath string, share *ctfile.Share, file *ctfile.File) bool {
@@ -205,9 +212,9 @@ LoopShare:
 				})
 				select {
 				case pendingCh <- task:
-					log.Printf("File: %s, Size: %s", task.File.Name, task.File.Size)
 					return true
 				case <-reWalk:
+					reWalk = make(chan struct{}, 1)
 					return false
 				}
 			})
@@ -220,7 +227,13 @@ LoopShare:
 				log.Print("some error happen, trigger reWalk...")
 				continue LoopWalk
 			default:
-				log.Fatal(err)
+				d := b.NextBackOff()
+				if d == backoff.Stop {
+					log.Fatalf("failed to parse share after max retry, err: %v", err)
+				}
+				log.Printf("failed to parse share, id: %s, err: %v, will retry after %s", id, err, d)
+				time.Sleep(d)
+				continue LoopWalk
 			}
 		}
 	}
