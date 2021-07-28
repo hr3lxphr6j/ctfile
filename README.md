@@ -9,8 +9,9 @@
 - `cookie`: 填写`400gb.com`的`pubcookie`（需登陆后）
 - `concurrent`: 同时下载任务数
 - `fileID`: 填写`https://545c.com/dir/`后面的字符串
+- `passcode`: 填写访问密码，可选
 
 ```shell script
-ct2aria.linux -cookie=${Cookie} -aria2-endpoint='http://127.0.0.1:6800/jsonrpc' -concurrent=3 ${fileID}
+ct2aria.linux -cookie=${Cookie} -aria2-endpoint='http://127.0.0.1:6800/jsonrpc' -concurrent=3 ${passcode}@${fileID}
 ```
 

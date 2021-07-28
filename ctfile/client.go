@@ -114,9 +114,20 @@ func (c *Client) SetCookies(pubCookie string) error {
 
 func (c *Client) GetShareInfo(shareID, folderID string) (*Share, error) {
 	url := fmt.Sprintf("%s%s", apiEndpoint, "/getdir.php")
-	resp, err := c.do(http.MethodGet, url,
-		map[string]string{"d": shareID, "folder_id": folderID},
-		map[string]string{"Origin": origin}, nil)
+	queries := map[string]string{
+		"folder_id": folderID,
+	}
+	var passcode string
+	s := strings.SplitN(shareID, "@", 2)
+	if len(s) == 2 {
+		passcode = s[0]
+		queries["passcode"] = s[0]
+		queries["d"] = s[1]
+		queries["path"] = "d"
+	} else {
+		queries["d"] = shareID
+	}
+	resp, err := c.do(http.MethodGet, url, queries, map[string]string{"Origin": origin}, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -127,6 +138,20 @@ func (c *Client) GetShareInfo(shareID, folderID string) (*Share, error) {
 	share := new(Share)
 	if err := json.NewDecoder(utfbom.SkipOnly(resp.Body)).Decode(share); err != nil {
 		return nil, err
+	}
+	if passcode != "" {
+		key := fmt.Sprintf("pass_d%d", share.FolderID)
+		exist := false
+		u, _ := urlpkg.Parse(apiEndpoint)
+		for _, item := range c.hc.Jar.Cookies(u) {
+			if item.Name == key {
+				exist = true
+				break
+			}
+		}
+		if !exist {
+			c.hc.Jar.SetCookies(u, append(c.hc.Jar.Cookies(u), &http.Cookie{Name: key, Value: passcode}))
+		}
 	}
 	return share, nil
 }
